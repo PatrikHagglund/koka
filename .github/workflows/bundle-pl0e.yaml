@@ -1,0 +1,63 @@
+on:
+  push:
+    tags:
+      - 'v*-pl0e*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+name: bundle-pl0e
+jobs:
+  build:
+    name: Bundle Koka (linux-x64 for pl0e)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Build compiler
+        uses: freckle/stack-action@v5
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          test: false
+          stack-build-arguments: ""
+          cache-save-always: true
+
+      - name: Build libraries and bundle (linux-x64)
+        run: stack exec koka -- -e -O2 util/bundle
+
+      - name: List bundle output
+        run: ls -la bundle/**/*.tar.gz || ls -laR bundle
+
+      # Publish a (non-draft) release with the linux-x64 tarball. Only runs for
+      # tag pushes (a release needs a tag ref). Named after the tag.
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bundle/**/*.tar.gz
+          draft: false
+          name: ${{ github.ref_name }}
+          body: |
+            Unofficial Koka build for the pl0e hermetic CI toolchain.
+
+            Base: koka dev version 3.2.7 (untagged, 2 commits past upstream v3.2.3)
+            plus two optimizer fixes that let the efuzz differential fuzzer
+            compile at -O3 in ~60s instead of exhausting the build budget:
+
+            - specialize: fix infinite loop at -O1+ (upstream PR #899)
+            - simplify: bound case-of-case duplication to avoid exponential
+              core blow-up on if/elif guard chains (upstream PR #902)
+
+            Not an upstream release. The asset is `koka-v3.2.7-linux-x64.tar.gz`
+            in the official bundle layout (bin/, lib/, share/), consumed by
+            rules_koka in the pl0e repo.
